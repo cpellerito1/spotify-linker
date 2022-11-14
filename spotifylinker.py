@@ -41,12 +41,15 @@ TOKEN_TIME_SET = time.time()
 # Global variables to hold username and password while program is running
 USERNAME = ''  # TODO: You can save your username inside the quotes here
 PASSWORD = ''  # TODO: You can save your password inside the quotes here
+# Global settings flags
+REVERSE_LINKS = False
+SKIP_QUEUE = False
 # Selenium driver setup
-options = Options()
-options.add_argument('headless')
-options.add_argument('window-size=1920,1080')
+opt = Options()
+opt.add_argument('headless')
+opt.add_argument('window-size=1920,1080')
 # TODO: This path needs to be set to the path where your chrome driver is
-driver = webdriver.Chrome("path goes here", options=options)
+driver = webdriver.Chrome("F:\\Software\\chromedriver.exe", options=opt)
 
 
 def get_authentication():
@@ -125,7 +128,7 @@ def get_current_track(access_token):
             return {"id": "Error 50X"}
         elif error == 404:
             print("Error: " + response['error']['message'])
-            print("Make sure spotify is open on a device")
+            print("Make sure spotify is open on one of your devices")
             return {"id": "Error 404"}
         elif error == 401:
             get_authentication()
@@ -188,8 +191,8 @@ def get_data_base():
     conn = sqlite3.connect('spotify_linker.db')
     print("Database opened successfully!")
     # Check if the links table already exists and if not add it
-    tables = conn.execute('SELECT name FROM sqlite_master WHERE type="table" AND name="links"').fetchall()
-    if not tables:
+    t_links = conn.execute('SELECT name FROM sqlite_master WHERE type="table" AND name="links"').fetchall()
+    if not t_links:
         conn.execute(
             'CREATE TABLE links('
             'Song_ID TEXT PRIMARY KEY NOT NULL,'
@@ -201,6 +204,24 @@ def get_data_base():
             'Linked_Name TEXT NOT NULL,'
             'Linked_Artist TEXT NOT NULL)'
         )
+    # Check the settings table
+    s = conn.execute('SELECT name FROM sqlite_master WHERE type="table" AND name="settings"').fetchall()
+    if not s:
+        conn.execute(
+            'CREATE TABLE settings('
+            'reverse INTEGER NOT NULL,'
+            'skip INTEGER NOT NULL)'
+        )
+        # insert default data if it doesn't exist
+        conn.execute('INSERT INTO settings(reverse,skip) VALUES(0,0)')
+        conn.commit()
+    else:
+        s = conn.execute('SELECT * FROM settings')
+        # Set the global flags if it does exist
+        global REVERSE_LINKS, SKIP_QUEUE
+        for row in s:
+            REVERSE_LINKS = True if row[0] == 1 else False
+            SKIP_QUEUE = True if row[1] == 1 else False
 
     return conn
 
@@ -247,24 +268,8 @@ def get_valid_input(prompt):
     return ans
 
 
-def main():
-    # Fetch the database if it exists, if not create it and the table links (found in get_data_base())
-    data_base = get_data_base()
-    # Dictionary to hold the links from the database (if any exist)
-    links = get_links(data_base)
-
-    # Ask user if they want to view the instructions
-    instructions = get_valid_input("Welcome!\nWould you like to view the instructions?(y/n): ")
-    if instructions == 'y':
-        print_instructions()
-
-    # Get authentication code
-    get_authentication()
-
-    # Set new variable depending on if user wants to add any new connections
-    new = get_valid_input("Do you wish to add any new links?(y/n): ")
-    # Loop to get the users input, have them use the currently playing song to link
-    while new == 'y':
+def add_new_links(data_base):
+    while True:
         input("When you are playing the song you want to start the link with press enter")
         song1 = get_current_track(SPOTIFY_ACCESS_TOKEN)
         input("Now, start playing the song you want to link to the first, when it is playing press enter")
@@ -281,17 +286,74 @@ def main():
         data_base.execute(query)
         data_base.commit()
 
-        new = get_valid_input("Do you wish to add another link?(y/n): ")
+        new = get_valid_input("Do you wish to add another link?(y/n): ").lower()
         if new == 'n':
             # Re get the links after new ones were added
-            links = get_links(data_base)
+            return get_links(data_base)
 
-    # Print the links if the user wants to
-    p_links = get_valid_input("Do you wish to view your active links?(y/n): ")
-    if p_links == 'y':
-        for song in links:
-            print(links[song]['name'] + " by " + links[song]['artist'] + " linked to " + links[song]['linked']['name'] +
-                  " by " + links[song]['linked']['artist'])
+
+def settings(data_base):
+    # Print the users current settings and ask them what they wish to do
+    global REVERSE_LINKS, SKIP_QUEUE
+    r_value = 'enabled' if REVERSE_LINKS else 'disabled'
+    s_value = 'enabled' if SKIP_QUEUE else 'disabled'
+    print('Reverse Links: ' + r_value)
+    print('Skip Queue: ' + s_value)
+    while True:
+        option = input("Reverse Links(1) Skip Queue(2) description of settings(3) exit(4)\nSelect an option: ")
+        match int(option):
+            case 1:
+                # handle changing setting
+                pass
+            case 2:
+                # hanlde changing setting
+                pass
+            case 3:
+                print("Reverse Links: If this is enabled, whenever the second song in a link comes on, the first song "
+                      "in that link will be added to the queue, then the current song will be added to the queue\nand "
+                      "then skipped to put the first song in the queue on. This behaves the same way as a normal link "
+                      "does and will work best when the queue is empty")
+                print("Skip Queue: If this is enabled, it will add a song to the top of your queue even if there are "
+                      "songs in it. However, this is not done in a clean way since the spotify api does not support "
+                      "queue manipulation.\nThis is achieved by skipping through all of the songs that are currently in"
+                      " your queue and then re adding them back to the queue after. This is a very unideal way of doing"
+                      " it but is unfortunately the only way at this moment")
+            case 4:
+                return
+            case _:
+                print("Error: please enter a valid response")
+
+
+def main():
+    # Fetch the database if it exists, if not create it and the table links (found in get_data_base())
+    data_base = get_data_base()
+    # Dictionary to hold the links from the database (if any exist)
+    links = get_links(data_base)
+
+    # Ask user if they want to view the instructions
+    instructions = get_valid_input("Welcome!\nWould you like to view the instructions?(y/n): ")
+    if instructions == 'y':
+        print_instructions()
+
+    # Get authentication code
+    get_authentication()
+
+    # Ask the user wha they want to do
+    while True:
+        options = input("(1) Add new links (2) View current active links (3) settings (4) none\nSelect an option: ")
+        match int(options):
+            case 1:
+                links = add_new_links(data_base)
+            case 2:
+                for song in links:
+                    print(links[song]['name'] + " by " + links[song]['artist'] + " linked to " +
+                          links[song]['linked']['name'] + " by " + links[song]['linked']['artist'])
+            case 3:
+                settings(data_base)
+            case 4:
+                break
+            case _:
+                print("Error: please enter a valid response")
 
     # Run continuous loop for checking current song
     while True:
